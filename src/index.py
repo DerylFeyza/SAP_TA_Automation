@@ -1,8 +1,13 @@
 # fastapi_server.py
 from fastapi import FastAPI, File, UploadFile
+import win32com.client
 import shutil
 import os
-from src.services.client_service import initializeSAPLogon
+from src.services.client_service import (
+    initializeSAPLogon,
+    checkGUIConnection,
+    loginConnection,
+)
 
 app = FastAPI()
 
@@ -14,6 +19,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 async def upload_excel(file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     initializeSAPLogon()
+    sapClient = win32com.client.GetObject("SAPGUI")
+    checkLogin = checkGUIConnection(sapClient)
+    if (
+        checkLogin["status"] == "not logged in"
+        or checkLogin["status"] == "no connection"
+    ):
+        loginConnection(sapClient)
+
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 

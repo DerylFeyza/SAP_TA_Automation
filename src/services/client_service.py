@@ -9,24 +9,35 @@ env_path = Path(".") / ".env"
 load_dotenv(dotenv_path=env_path)
 
 
-def checkGUIConnection():
-    try:
-        SapGuiAuto = win32com.client.GetObject("SAPGUI")
-        if not SapGuiAuto:
-            print("❌ SAP GUI is not running.")
-            exit()
+def wait_for_logon_window(timeout=20):
+    SapGuiAuto = win32com.client.GetObject("SAPGUI")
+    app = SapGuiAuto.GetScriptingEngine
 
-        application = SapGuiAuto.GetScriptingEngine
+    start = time.time()
+    while time.time() - start < timeout:
+        if app.Children.Count > 0:
+            wnd = app.Children(0)
+            if wnd.Children.Count > 0:
+                return wnd.Children(0)
+        time.sleep(1)
+
+    raise TimeoutError("SAP Logon window did not appear in time")
+
+
+def checkGUIConnection(sapGUIClient):
+    try:
+
+        application = sapGUIClient.GetScriptingEngine
         if application is None or application.Children.Count == 0:
             print("⚠️ SAP GUI Scripting is enabled, but no connections are open.")
             print("👉 Open SAP Logon and connect to a system first.")
-            exit()
+            return {"status": "no connection"}
 
         connection = application.Children(0)
         if connection.Children.Count == 0:
             print("⚠️ Connected to SAP system, but no active sessions found.")
             print("👉 Log in with your user credentials to start a session.")
-            exit()
+            return {"status": "not logged in"}
 
         session = connection.Children(0)
         print("✅ SAP GUI Scripting is ENABLED and you are connected.")
@@ -34,10 +45,12 @@ def checkGUIConnection():
         print(f"System: {session.Info.SystemName}")
         print(f"Client: {session.Info.Client}")
         print(f"User: {session.Info.User or 'Not logged in'}")
+        return {"status": "connected", "active": True, "session": session}
 
     except Exception as e:
         print("❌ SAP GUI Scripting not available or disabled.")
         print("Error:", e)
+        return {"status": "error", "message": str(e)}
 
 
 def initializeSAPLogon():
@@ -52,3 +65,38 @@ def initializeSAPLogon():
         application = SapGuiAuto.GetScriptingEngine
 
     return application
+
+
+def loginConnection(sapGUIClient):
+    try:
+        print("Loggin in...")
+        sapGUIClient = win32com.client.GetObject("SAPGUI")
+        application = sapGUIClient.GetScriptingEngine
+        connection = application.OpenConnection(os.getenv("SAP_CONN_NAME"), True)
+        session = connection.Children(0)
+        session.findById("wnd[0]/usr/txtRSYST-BNAME").text = os.getenv("SAP_CONN_USER")
+        session.findById("wnd[0]/usr/pwdRSYST-BCODE").text = os.getenv(
+            "SAP_CONN_PASSWORD"
+        )
+        session.findById("wnd[0]/usr/txtRSYST-MANDT").text = os.getenv(
+            "SAP_CONN_CLIENT"
+        )
+        session.findById("wnd[0]/tbar[0]/btn[0]").press()
+        popup = session.findById("wnd[1]", False)
+
+        if popup:
+            text = popup.text
+            print("⚠️ SAP Multiple Logon Popup detected:", text)
+
+            return {
+                "status": "error",
+                "message": "Multiple logon detected. Please resolve manually.",
+            }
+
+        # print(session.Info.ScreenNumber)
+        session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
+        session.findById("wnd[0]").sendVKey(0)
+        return session
+    except Exception as e:
+        print("❌ Error logging into SAP.")
+        print("Error:", e)
