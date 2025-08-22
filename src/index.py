@@ -25,8 +25,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 @app.post("/automate")
 async def upload_excel(file: UploadFile = File(...)):
     file_extension = os.path.splitext(file.filename)[1]
-    current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-    new_filename = f"automate_{current_date}{file_extension}"
+    date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_filename = f"automate_{date_identifier}{file_extension}"
     file_path = os.path.join(UPLOAD_FOLDER, new_filename)
     session = None
     initializeSAPLogon()
@@ -49,19 +49,22 @@ async def upload_excel(file: UploadFile = File(...)):
     rollback_df = validate_rollback_result["rollback"]
     cleaned_df = validate_rollback_result["cleaned"]
 
-    get_pid_sap(session, cleaned_df)
+    bast = get_pid_sap(session, cleaned_df, date_identifier)
 
     print(rollback_df.shape)
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
         rollback_df.to_excel(writer, sheet_name="rollback", index=False)
+        bast.to_excel(writer, sheet_name="bast", index=False)
 
     draft.seek(0)
     return StreamingResponse(
         draft,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="processed.xlsx"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="processed_{date_identifier}.xlsx"'
+        },
     )
 
 
