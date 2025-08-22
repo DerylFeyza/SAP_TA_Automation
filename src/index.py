@@ -1,5 +1,6 @@
 # fastapi_server.py
 from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import StreamingResponse
 import win32com.client
 import shutil
 import os
@@ -10,6 +11,10 @@ from src.services.client_service import (
     loginConnection,
 )
 from src.database.proactive_query import get_pid_rollback
+from src.services.validation_service import validate_rollback
+from src.services.automation_service import get_pid_sap
+from io import BytesIO
+import pandas as pd
 
 app = FastAPI()
 
@@ -23,7 +28,7 @@ async def upload_excel(file: UploadFile = File(...)):
     current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_filename = f"automate_{current_date}{file_extension}"
     file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-
+    session = None
     initializeSAPLogon()
     sapClient = win32com.client.GetObject("SAPGUI")
     checkLogin = checkGUIConnection(sapClient)
@@ -31,16 +36,33 @@ async def upload_excel(file: UploadFile = File(...)):
         checkLogin["status"] == "not logged in"
         or checkLogin["status"] == "no connection"
     ):
-        loginConnection(sapClient)
+        session = loginConnection(sapClient)["session"]
+    else:
+        session = checkLogin["session"]
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Trigger automation (replace with your SAP script)
-    # Example: subprocess.Popen(["python", "cn41_automation.py", file_path])
-    print(f"Automation would run on: {file_path}")
+    original_df = pd.read_excel(file_path, sheet_name="Format")
 
-    return {"status": "success", "file_saved": file_path}
+    validate_rollback_result = validate_rollback(original_df)
+    rollback_df = validate_rollback_result["rollback"]
+    cleaned_df = validate_rollback_result["cleaned"]
+
+    get_pid_sap(session, cleaned_df)
+
+    print(rollback_df.shape)
+    draft = BytesIO()
+    with pd.ExcelWriter(draft, engine="openpyxl") as writer:
+        original_df.to_excel(writer, sheet_name="Format", index=False)
+        rollback_df.to_excel(writer, sheet_name="rollback", index=False)
+
+    draft.seek(0)
+    return StreamingResponse(
+        draft,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="processed.xlsx"'},
+    )
 
 
 @app.post("/test")

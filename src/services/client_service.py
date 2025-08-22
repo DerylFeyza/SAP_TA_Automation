@@ -96,7 +96,7 @@ def loginConnection(sapGUIClient):
         # print(session.Info.ScreenNumber)
         session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
         session.findById("wnd[0]").sendVKey(0)
-        return session
+        return {"status": "connected", "active": True, "session": session}
     except Exception as e:
         print("❌ Error logging into SAP.")
         print("Error:", e)
