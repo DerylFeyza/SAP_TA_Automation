@@ -13,6 +13,7 @@ from src.services.client_service import (
 from src.database.proactive_query import get_pid_rollback
 from src.services.validation_service import validate_rollback
 from src.services.automation_service import get_pid_sap
+from src.services.format_service import seperate_df
 from io import BytesIO
 import pandas as pd
 
@@ -46,8 +47,11 @@ async def upload_excel(file: UploadFile = File(...)):
     original_df = pd.read_excel(file_path, sheet_name="Format")
 
     validate_rollback_result = validate_rollback(original_df)
-    rollback_df = validate_rollback_result["rollback"]
+    if validate_rollback_result.get("error") == True:
+        return {"error": True, "message": validate_rollback_result.get("message")}
+
     cleaned_df = validate_rollback_result["cleaned"]
+    rollback_df = validate_rollback_result["rollback"]
 
     bast = get_pid_sap(session, cleaned_df, date_identifier)
 
@@ -55,7 +59,8 @@ async def upload_excel(file: UploadFile = File(...)):
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
-        rollback_df.to_excel(writer, sheet_name="rollback", index=False)
+        if not rollback_df.empty:
+            rollback_df.to_excel(writer, sheet_name="rollback", index=False)
         bast.to_excel(writer, sheet_name="bast", index=False)
 
     draft.seek(0)
