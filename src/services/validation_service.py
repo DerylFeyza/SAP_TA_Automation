@@ -3,8 +3,8 @@ import pandas as pd
 
 
 def validate_rollback(df: pd.DataFrame):
-    capitalized_status = df["Status To Be"].str.upper()
-    unique_status_values = capitalized_status.unique()
+    df["Status To Be"] = df["Status To Be"].str.upper()
+    unique_status_values = df["Status To Be"].unique()
     valid_statuses = {"CANCEL", "CLOSE", "BAST"}
     invalid_statuses = [
         status for status in unique_status_values if status not in valid_statuses

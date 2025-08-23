@@ -13,7 +13,7 @@ from src.services.client_service import (
 from src.database.proactive_query import get_pid_rollback
 from src.services.validation_service import validate_rollback
 from src.services.automation_service import get_pid_sap
-from src.services.format_service import seperate_df
+from src.services.format_service import clusterize_dfs
 from io import BytesIO
 import pandas as pd
 
@@ -53,15 +53,25 @@ async def upload_excel(file: UploadFile = File(...)):
     cleaned_df = validate_rollback_result["cleaned"]
     rollback_df = validate_rollback_result["rollback"]
 
-    bast = get_pid_sap(session, cleaned_df, date_identifier)
-
-    print(rollback_df.shape)
+    status_dfs = get_pid_sap(session, cleaned_df, date_identifier)
+    clustered_res = clusterize_dfs(status_dfs)
+    status_processed_df = clustered_res["status"]
+    clustered_df = clustered_res["clustered"]
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
         if not rollback_df.empty:
             rollback_df.to_excel(writer, sheet_name="rollback", index=False)
-        bast.to_excel(writer, sheet_name="bast", index=False)
+        for status, df in status_processed_df.items():
+            sheet_name = sheet_name = (
+                str(status)[:31].replace("/", "_").replace("\\", "_")
+            )
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        for status, df in clustered_df.items():
+            sheet_name = (
+                str(status)[:31].replace("/", "_").replace("\\", "_") + "_CLUSTERED"
+            )
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     draft.seek(0)
     return StreamingResponse(
