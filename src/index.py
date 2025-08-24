@@ -57,7 +57,7 @@ async def upload_excel(file: UploadFile = File(...)):
     clustered_res = clusterize_dfs(status_dfs)
     status_processed_df = clustered_res["status"]
     clustered_df = clustered_res["clustered"]
-    execute_bast(status_dfs)
+    executed_bast = execute_bast(status_dfs, date_identifier)
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
@@ -73,6 +73,8 @@ async def upload_excel(file: UploadFile = File(...)):
                 str(status)[:31].replace("/", "_").replace("\\", "_") + "_CLUSTERED"
             )
             df.to_excel(writer, sheet_name=sheet_name, index=False)
+        if not executed_bast.empty:
+            executed_bast.to_excel(writer, sheet_name="EXECUTED-BAST", index=False)
 
     draft.seek(0)
     return StreamingResponse(

@@ -5,6 +5,7 @@ import pyperclip
 import multiprocessing as mp
 import pythoncom
 import win32com.client
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier):
@@ -71,10 +72,11 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier):
         return None
 
 
-def execute_bast(clusterized_dfs: pd.DataFrame):
+def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
     try:
         print("executing")
         bast_df = clusterized_dfs["BAST"]
+        bast_df = bast_df.dropna(subset=["Cluster"])
         max_cluster = bast_df["Cluster"].max()
 
         SapGuiAuto = win32com.client.GetObject("SAPGUI")
@@ -89,7 +91,6 @@ def execute_bast(clusterized_dfs: pd.DataFrame):
             time.sleep(1)
         print(f"Max cluster: {max_cluster}")
 
-        jobs = []
         cluster_map = {
             cluster: idx for idx, cluster in enumerate(bast_df["Cluster"].unique())
         }
@@ -121,7 +122,6 @@ def execute_bast(clusterized_dfs: pd.DataFrame):
             ).caretPosition = 6
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
             session.findById("wnd[0]/usr/cmbUUSR").key = "BNOV"
-            # p = mp.Process(target=attach_session, args=(session_id, df_chunk, project_ids))
             session.findById("wnd[0]/usr/chkTEST").selected = False
             session.findById("wnd[0]").sendVKey(8)
             session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").setCurrentCell(
@@ -137,18 +137,59 @@ def execute_bast(clusterized_dfs: pd.DataFrame):
             session.findById("wnd[2]/tbar[0]/btn[8]").press()
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
             session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectAll()
-            # p.start()
-            # jobs.append(p)
 
-        # for j in jobs:
-        #     j.join()
-        print("presiden goblok")
+        futures = []
+        executed_results = []
+        with ProcessPoolExecutor() as executor:
+            for cluster_id, session_id in cluster_map.items():
+                print(f"Submitting cluster {cluster_id} -> session {session_id}")
+                futures.append(
+                    executor.submit(
+                        bulk_execute_session,
+                        session_id,
+                        "BAST",
+                        cluster_id,
+                        date_identifier,
+                    )
+                )
+
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    full_path = os.path.join(
+                        os.getenv("SAP_OUTPUT_PATH"), result["file"]
+                    )
+                    print(f"Reading file: {full_path}")
+                    try:
+                        executed_bast = pd.read_csv(
+                            full_path, sep="|", skipinitialspace=True, skiprows=[0, 2]
+                        )
+                        executed_bast = executed_bast.loc[
+                            :, ~executed_bast.columns.str.contains("^Unnamed")
+                        ]
+                        executed_bast.columns = executed_bast.columns.str.strip()
+                        executed_bast = executed_bast.map(
+                            lambda x: x.strip() if isinstance(x, str) else x
+                        )
+                        executed_bast = executed_bast.dropna(how="all")
+                        executed_bast["session_id"] = result["session"]
+                        executed_bast["cluster_id"] = result["cluster"]
+                        executed_results.append(executed_bast)
+                    except Exception as e:
+                        print(f"Error reading {full_path}: {e}")
+
+        executed_bast = (
+            pd.concat(executed_results, ignore_index=True)
+            if executed_results
+            else pd.DataFrame()
+        )
+        return executed_bast
     except Exception as e:
         print(f"Error automating: {e}")
         return None
 
 
-def bulk_execute_session(session_id):
+def bulk_execute_session(session_id, status, cluster, date_identifier):
     """Worker that runs in its own process"""
     pythoncom.CoInitialize()
     SapGuiAuto = win32com.client.GetObject("SAPGUI")
@@ -157,8 +198,16 @@ def bulk_execute_session(session_id):
     session = connection.Children(session_id)
 
     try:
+        print(f"Starting session {session_id} for cluster {cluster}")
         session.findById("wnd[0]/tbar[1]/btn[8]").press()
-
+        session.findById("wnd[0]/tbar[1]/btn[45]").press()
+        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+        session.findById("wnd[1]/usr/ctxtDY_PATH").text = os.getenv("SAP_OUTPUT_PATH")
+        filename = f"{status}C{cluster}S{session_id}_{date_identifier}.txt"
+        session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
+        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+        print(f"Session {session_id} finished successfully")
+        return {"file": filename, "session": session_id, "cluster": cluster}
     except Exception as e:
         print(f"Error in session {session_id}: {e}")
     finally:

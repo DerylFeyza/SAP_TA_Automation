@@ -9,6 +9,7 @@ def clusterize_dfs(dfs: dict):
     clustered_dfs = {}
     for status, df in dfs.items():
         df["Level1"] = df["Title"].str[:10]
+        df["Level2"] = df["Title"].str[:15]
         level1_counts = df["Level1"].value_counts().reset_index()
         level1_counts.columns = ["Level1", "Count"]
 
