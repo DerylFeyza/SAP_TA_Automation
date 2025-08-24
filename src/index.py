@@ -12,7 +12,7 @@ from src.services.client_service import (
 )
 from src.database.proactive_query import get_pid_rollback
 from src.services.validation_service import validate_rollback
-from src.services.automation_service import get_pid_sap
+from src.services.automation_service import get_pid_sap, execute_bast
 from src.services.format_service import clusterize_dfs
 from io import BytesIO
 import pandas as pd
@@ -57,6 +57,7 @@ async def upload_excel(file: UploadFile = File(...)):
     clustered_res = clusterize_dfs(status_dfs)
     status_processed_df = clustered_res["status"]
     clustered_df = clustered_res["clustered"]
+    execute_bast(status_dfs)
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)

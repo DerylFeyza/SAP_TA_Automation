@@ -19,8 +19,8 @@ def clusterize_dfs(dfs: dict):
         num_clusters = min(6, len(level1_counts))
         total_count = level1_counts["Count"].sum()
 
-        if total_count < 1000:
-            num_clusters = 1
+        # if total_count < 1000:
+        #     num_clusters = 1
 
         if num_clusters > 0:
             cluster_totals = [0] * num_clusters
