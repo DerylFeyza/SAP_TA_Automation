@@ -1,5 +1,12 @@
-from src.database.proactive_query import get_pid_rollback, get_pid_report
+from src.database.proactive_query import (
+    get_pid_rollback,
+    get_pid_report,
+    get_reservation,
+)
 import pandas as pd
+import pyperclip
+import os
+from io import StringIO
 
 
 def validate_rollback(df: pd.DataFrame):
@@ -31,7 +38,9 @@ def validate_rollback(df: pd.DataFrame):
     if not proactive_df.empty and "project_id" in proactive_df.columns:
         df["Level2"] = df["PROJECT_ID_SAP"].str[:15]
         df = df.merge(
-            proactive_df[["project_id_sap", "project_id"]],
+            proactive_df.rename(columns={"project_id": "project_id_db"})[
+                ["project_id_sap", "project_id_db"]
+            ],
             left_on="Level2",
             right_on="project_id_sap",
             how="left",
@@ -42,10 +51,10 @@ def validate_rollback(df: pd.DataFrame):
         rollback_project_ids = rollback_df["project_id"].astype(str).tolist()
         print(rollback_project_ids)
         cleaned_rollback_df = df[
-            ~df["PROJECT_ID"].astype(str).isin(rollback_project_ids)
+            ~df["project_id_db"].astype(str).isin(rollback_project_ids)
         ]
         removed_rows = df[
-            df["PROJECT_ID"].astype(str).str.strip().isin(rollback_project_ids)
+            df["project_id_db"].astype(str).str.strip().isin(rollback_project_ids)
         ]
         print("Removed rows:")
         print(removed_rows)
@@ -53,3 +62,140 @@ def validate_rollback(df: pd.DataFrame):
         cleaned_rollback_df = df
 
     return {"error": False, "rollback": rollback_df, "cleaned": cleaned_rollback_df}
+
+
+def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
+    try:
+        session.StartTransaction("CN41N")
+
+        try:
+            session.findById("wnd[1]/usr/ctxtTCNTT-PROFID").text = "000000000001"
+            session.findById("wnd[1]").sendVKey(0)
+        except:
+            pass
+
+        project_ids = cancel_df["Level2"].dropna().astype(str).unique().tolist()
+        pyperclip.copy("\r\n".join(project_ids))
+        session.findById("wnd[0]/usr/btn%_CN_PSPNR_%_APP_%-VALU_PUSH").press()
+        session.findById("wnd[1]/tbar[0]/btn[16]").press()
+        session.findById("wnd[1]/tbar[0]/btn[24]").press()
+        session.findById("wnd[1]/tbar[0]/btn[8]").press()
+
+        session.findById("wnd[0]/usr/ctxtP_DISVAR").text = "/TA-1"
+        session.findById("wnd[0]").sendVKey(8)
+
+        session.findById(
+            "wnd[0]/usr/cntlCUSTCONTAINER_ALV_TREE/shellcont/shell/shellcont[1]/shell[0]"
+        ).pressContextButton("MENU_SAVE")
+        session.findById(
+            "wnd[0]/usr/cntlCUSTCONTAINER_ALV_TREE/shellcont/shell/shellcont[1]/shell[0]"
+        ).selectContextMenuItem("%PC")
+
+        filename = f"CANCELVALIDATION_{date_identifier}.txt"
+        session.findById("wnd[1]/usr/ctxtDY_PATH").text = os.getenv("SAP_OUTPUT_PATH")
+        session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
+        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+
+        file_path = os.path.join(os.getenv("SAP_OUTPUT_PATH"), filename)
+
+        try:
+            df = pd.read_csv(
+                file_path,
+                sep="|",
+                skipinitialspace=True,
+                skiprows=[0, 2],
+                encoding="utf-8",
+            )
+        except UnicodeDecodeError:
+            df = pd.read_csv(
+                file_path,
+                sep="|",
+                skipinitialspace=True,
+                skiprows=[0, 2],
+                encoding="latin1",
+            )
+
+        df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+        df.columns = df.columns.str.strip()
+        df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+
+        return df
+    except Exception as e:
+        print(f"Error automating: {e}")
+        return pd.DataFrame()
+
+
+def validate_has_reservation(cleaned_df: pd.DataFrame):
+    try:
+        project_ids = cleaned_df["project_id_db"].dropna().astype(str).unique().tolist()
+        reservation_res = get_reservation(project_ids)
+        reservation_df = pd.DataFrame(reservation_res)
+        return reservation_df
+    except Exception as e:
+        print(f"Error validating has reservation: {e}")
+        return pd.DataFrame()
+
+
+def validate_check_budgeting(session, cleaned_df: pd.DataFrame, date_identifier):
+    try:
+        session.StartTransaction("ZPS004")
+        project_id_saps = cleaned_df["Level2"].dropna().astype(str).unique().tolist()
+        project_id_saps = [f"{pid}*" for pid in project_id_saps]
+
+        pyperclip.copy("\r\n".join(project_id_saps))
+        session.findById("wnd[0]/usr/btn%_SP$00001_%_APP_%-VALU_PUSH").press()
+        session.findById("wnd[1]/tbar[0]/btn[16]").press()
+        session.findById("wnd[1]/tbar[0]/btn[24]").press()
+        session.findById("wnd[1]/tbar[0]/btn[8]").press()
+        session.findById("wnd[0]").sendVKey(8)
+
+        filename = f"BUDGETING{date_identifier}.txt"
+        session.findById(
+            "wnd[0]/usr/cntlCONTAINER/shellcont/shell"
+        ).pressToolbarContextButton("&MB_EXPORT")
+        session.findById(
+            "wnd[0]/usr/cntlCONTAINER/shellcont/shell"
+        ).selectContextMenuItem("&PC")
+        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+        session.findById("wnd[1]/usr/ctxtDY_PATH").text = os.getenv("SAP_OUTPUT_PATH")
+        session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
+        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+
+        file_path = os.path.join(os.getenv("SAP_OUTPUT_PATH"), filename)
+
+        try:
+            df = pd.read_csv(
+                file_path,
+                sep="|",
+                skipinitialspace=True,
+                skiprows=[0, 2],
+                encoding="utf-8",
+            )
+        except UnicodeDecodeError:
+            df = pd.read_csv(
+                file_path,
+                sep="|",
+                skipinitialspace=True,
+                skiprows=[0, 2],
+                encoding="latin1",
+            )
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        table_lines = [line for line in lines if line.strip().startswith("|")]
+        csv_like = "\n".join(
+            [
+                ",".join(col.strip() for col in line.strip("|").split("|"))
+                for line in table_lines
+            ]
+        )
+        df = pd.read_csv(StringIO(csv_like))
+        df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+        df.columns = df.columns.str.strip()
+        df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+
+        return df
+    except Exception as e:
+        print(f"Error validating has budgeting: {e}")
+        return pd.DataFrame()

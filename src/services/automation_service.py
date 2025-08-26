@@ -78,10 +78,20 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: 
             df.columns = df.columns.str.strip()
             df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
             df = df[~df["Level"].isin([0, 1])]
+            df["Level1"] = df["Title"].str[:10]
+            df["Level2"] = df["Title"].str[:15]
+
+            mapping_df = cleaned_df[
+                ["project_id_sap", "project_id_db"]
+            ].drop_duplicates()
+            df = df.merge(
+                mapping_df,
+                left_on="Level2",
+                right_on="project_id_sap",
+                how="left",
+            )
+            df = df.drop(columns=["project_id_sap"])
             status_dfs[status] = df
-
-            print(status_dfs["BAST"])
-
         return status_dfs
     except Exception as e:
         print(f"Error automating: {e}")
@@ -212,7 +222,12 @@ def execute_bast(status_dfs: pd.DataFrame, date_identifier):
         bast_df = bast_df.copy()
         bast_df["New User Status"] = bast_df["Title"].map(status_map)
         status_dfs["BAST"] = bast_df
-        return {"executed": executed_bast, "status": status_dfs}
+        bast_report_df = get_status_report(status_dfs["BAST"], "BNOV")
+        return {
+            "executed": executed_bast,
+            "status": status_dfs,
+            "report": bast_report_df,
+        }
     except Exception as e:
         print(f"Error automating: {e}")
         return None

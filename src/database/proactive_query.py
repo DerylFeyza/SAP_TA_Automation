@@ -32,3 +32,11 @@ def update_status_proactive(project_ids: list[str]):
         WHERE a.project_id_sap IN ({", ".join(["%s"] * len(project_ids))})
     """
     return query(sql, tuple(project_ids))
+
+
+def get_reservation(project_ids: list[str]):
+    sql = f"""
+        SELECT DISTINCT a.project_id From alista_v3.t_reservation a 
+        WHERE a.project_id IN ({", ".join(["%s"] * len(project_ids))})
+    """
+    return query(sql, tuple(project_ids))

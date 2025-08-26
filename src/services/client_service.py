@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import time
 import os
+from fastapi import HTTPException
 
 env_path = Path(".") / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -58,9 +59,8 @@ def initializeSAPLogon():
         SapGuiAuto = win32com.client.GetObject("SAPGUI")
         application = SapGuiAuto.GetScriptingEngine
     except Exception:
-        # SAP Logon is not running, start it
         subprocess.Popen(os.getenv("SAP_LOGON_PATH"))
-        time.sleep(10)  # wait for SAP Logon to load
+        time.sleep(10)
         SapGuiAuto = win32com.client.GetObject("SAPGUI")
         application = SapGuiAuto.GetScriptingEngine
 
@@ -103,3 +103,24 @@ def loginConnection(sapGUIClient):
             "status": "error",
             "message": "Login Unsuccessful",
         }
+
+
+def getSession():
+    session = None
+    initializeSAPLogon()
+    sapClient = win32com.client.GetObject("SAPGUI")
+    checkLogin = checkGUIConnection(sapClient)
+    if (
+        checkLogin["status"] == "not logged in"
+        or checkLogin["status"] == "no connection"
+    ):
+        loginResult = loginConnection(sapClient)
+        if loginResult["status"] == "error":
+            raise HTTPException(
+                status_code=500, detail=loginResult.get("message", "SAP login failed")
+            )
+        session = loginResult["session"]
+    else:
+        session = checkLogin["session"]
+
+    return {"error": False, "session": session}

@@ -1,18 +1,20 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
-import win32com.client
 import shutil
 import os
 from datetime import datetime
 from src.services.client_service import (
-    initializeSAPLogon,
-    checkGUIConnection,
-    loginConnection,
+    getSession,
 )
 from src.database.proactive_query import get_pid_rollback
-from src.services.validation_service import validate_rollback
+from src.services.validation_service import (
+    validate_rollback,
+    validate_actual_cost,
+    validate_has_reservation,
+    validate_check_budgeting,
+)
 from src.services.automation_service import get_pid_sap, execute_bast
-from src.services.format_service import clusterize_dfs, get_status_report
+from src.services.format_service import clusterize_dfs
 from io import BytesIO
 import pandas as pd
 from fastapi import HTTPException
@@ -29,22 +31,7 @@ async def upload_excel(file: UploadFile = File(...)):
     date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_filename = f"automate_{date_identifier}{file_extension}"
     file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-    session = None
-    initializeSAPLogon()
-    sapClient = win32com.client.GetObject("SAPGUI")
-    checkLogin = checkGUIConnection(sapClient)
-    if (
-        checkLogin["status"] == "not logged in"
-        or checkLogin["status"] == "no connection"
-    ):
-        loginResult = loginConnection(sapClient)
-        if loginResult["status"] == "error":
-            raise HTTPException(
-                status_code=500, detail=loginResult.get("message", "SAP login failed")
-            )
-        session = loginResult["session"]
-    else:
-        session = checkLogin["session"]
+    session = getSession()["session"]
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -65,9 +52,11 @@ async def upload_excel(file: UploadFile = File(...)):
     clustered_df = clustered_res["clustered"]
 
     result_executed = execute_bast(status_dfs, date_identifier)
-    executed_bast_df = result_executed["executed"]
-    status_dfs = result_executed["status"]
-    bast_report_df = get_status_report(status_dfs["BAST"], "BNOV")
+    if not status_dfs["BAST"].empty:
+        executed_bast_df = result_executed["executed"]
+        report_bast_df = result_executed["report"]
+        status_dfs = result_executed["status"]
+
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
@@ -86,8 +75,8 @@ async def upload_excel(file: UploadFile = File(...)):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
         if not executed_bast_df.empty:
             executed_bast_df.to_excel(writer, sheet_name="EXECUTED-BAST", index=False)
-        if not bast_report_df.empty:
-            bast_report_df.to_excel(writer, sheet_name="REPORT-BAST", index=False)
+        if not report_bast_df.empty:
+            report_bast_df.to_excel(writer, sheet_name="REPORT-BAST", index=False)
 
     draft.seek(0)
     return StreamingResponse(
@@ -95,6 +84,120 @@ async def upload_excel(file: UploadFile = File(...)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="processed_{date_identifier}.xlsx"'
+        },
+    )
+
+
+@app.post("/clusterize")
+async def clusterize(file: UploadFile = File(...)):
+    file_extension = os.path.splitext(file.filename)[1]
+    date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_filename = f"automate_{date_identifier}{file_extension}"
+    file_path = os.path.join(UPLOAD_FOLDER, new_filename)
+    session = getSession()["session"]
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    original_df = pd.read_excel(file_path, sheet_name="Format")
+
+    validate_rollback_result = validate_rollback(original_df)
+    if validate_rollback_result.get("error") == True:
+        return {"error": True, "message": validate_rollback_result.get("message")}
+
+    cleaned_df = validate_rollback_result["cleaned"]
+    rollback_df = validate_rollback_result["rollback"]
+
+    status_dfs = {}
+    status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
+    clustered_res = clusterize_dfs(status_dfs)
+    status_dfs = clustered_res["status"]
+    clustered_df = clustered_res["clustered"]
+
+    draft = BytesIO()
+    with pd.ExcelWriter(draft, engine="openpyxl") as writer:
+        original_df.to_excel(writer, sheet_name="Format", index=False)
+        cleaned_df.to_excel(writer, sheet_name="cleaned", index=False)
+        if not rollback_df.empty:
+            rollback_df.to_excel(writer, sheet_name="rollback", index=False)
+        for status, df in status_dfs.items():
+            sheet_name = sheet_name = (
+                str(status)[:31].replace("/", "_").replace("\\", "_")
+            )
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        for status, df in clustered_df.items():
+            sheet_name = (
+                str(status)[:31].replace("/", "_").replace("\\", "_") + "_CLUSTERED"
+            )
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    draft.seek(0)
+    return StreamingResponse(
+        draft,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="CLUSTERIZED_{date_identifier}.xlsx"'
+        },
+    )
+
+
+@app.post("/validate_cancel")
+async def validateCancel(file: UploadFile = File(...)):
+    file_extension = os.path.splitext(file.filename)[1]
+    date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_filename = f"VALIDATEDCANCEL_{date_identifier}{file_extension}"
+    file_path = os.path.join(UPLOAD_FOLDER, new_filename)
+    session = getSession()["session"]
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    original_df = pd.read_excel(file_path, sheet_name="Format")
+    original_df = original_df[original_df["Status To Be"].str.upper() == "CANCEL"]
+    validate_rollback_result = validate_rollback(original_df)
+    if validate_rollback_result.get("error") == True:
+        return {"error": True, "message": validate_rollback_result.get("message")}
+
+    cleaned_df = validate_rollback_result["cleaned"]
+    rollback_df = validate_rollback_result["rollback"]
+
+    status_dfs = {}
+    status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
+    clustered_res = clusterize_dfs(status_dfs)
+    clustered_df = clustered_res["clustered"]
+    status_dfs = clustered_res["status"]
+    actual_cost_df = validate_actual_cost(
+        session, status_dfs["CANCEL"], date_identifier
+    )
+    reservation_df = validate_has_reservation(status_dfs["CANCEL"])
+    budgeting_df = validate_check_budgeting(
+        session, status_dfs["CANCEL"], date_identifier
+    )
+
+    draft = BytesIO()
+    with pd.ExcelWriter(draft, engine="openpyxl") as writer:
+        original_df.to_excel(writer, sheet_name="Format", index=False)
+        cleaned_df.to_excel(writer, sheet_name="cleaned", index=False)
+        if not rollback_df.empty:
+            rollback_df.to_excel(writer, sheet_name="rollback", index=False)
+        if not actual_cost_df.empty:
+            actual_cost_df.to_excel(writer, sheet_name="CANCEL-ACTUALCOST", index=False)
+        if not status_dfs["CANCEL"].empty:
+            status_dfs["CANCEL"].to_excel(writer, sheet_name="CANCEL", index=False)
+        if not reservation_df.empty:
+            reservation_df.to_excel(writer, sheet_name="reservation", index=False)
+        if not budgeting_df.empty:
+            budgeting_df.to_excel(writer, sheet_name="BUDGETING", index=False)
+        if not clustered_df["CANCEL"].empty:
+            clustered_df["CANCEL"].to_excel(
+                writer, sheet_name="CANCEL-CLUSTERED", index=False
+            )
+
+    draft.seek(0)
+    return StreamingResponse(
+        draft,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="VALIDATEDCANCEL_{date_identifier}.xlsx"'
         },
     )
 
