@@ -13,8 +13,12 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: 
         processed_statuses = cleaned_df["Status To Be"].unique()
         print(processed_statuses)
         session.StartTransaction("CNMASSSTATUS")
-        session.findById("wnd[1]/usr/ctxtTCNT-PROF_DB").text = "000000000001"
-        session.findById("wnd[1]").sendVKey(0)
+
+        try:
+            session.findById("wnd[1]/usr/ctxtTCNT-PROF_DB").text = "000000000001"
+            session.findById("wnd[1]").sendVKey(0)
+        except:
+            pass
 
         for status in processed_statuses:
             print(f"Processing status: {status}")

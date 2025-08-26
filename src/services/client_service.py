@@ -46,6 +46,8 @@ def checkGUIConnection(sapGUIClient):
         print(f"System: {session.Info.SystemName}")
         print(f"Client: {session.Info.Client}")
         print(f"User: {session.Info.User or 'Not logged in'}")
+        session.SendCommand("/n")
+        session.findById("wnd[0]").sendVKey(0)
         return {"status": "connected", "active": True, "session": session}
 
     except Exception as e:

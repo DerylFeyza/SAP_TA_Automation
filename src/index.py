@@ -12,6 +12,7 @@ from src.services.validation_service import (
     validate_actual_cost,
     validate_has_reservation,
     validate_check_budgeting,
+    exclude_cancel_validated,
 )
 from src.services.automation_service import get_pid_sap, execute_bast
 from src.services.format_service import clusterize_dfs
@@ -173,6 +174,10 @@ async def validateCancel(file: UploadFile = File(...)):
         session, status_dfs["CANCEL"], date_identifier
     )
 
+    status_dfs["CANCEL"] = exclude_cancel_validated(
+        status_dfs["CANCEL"], actual_cost_df, reservation_df, budgeting_df
+    )
+
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
@@ -184,9 +189,11 @@ async def validateCancel(file: UploadFile = File(...)):
         if not status_dfs["CANCEL"].empty:
             status_dfs["CANCEL"].to_excel(writer, sheet_name="CANCEL", index=False)
         if not reservation_df.empty:
-            reservation_df.to_excel(writer, sheet_name="reservation", index=False)
+            reservation_df.to_excel(
+                writer, sheet_name="CANCEL-RESERVATION", index=False
+            )
         if not budgeting_df.empty:
-            budgeting_df.to_excel(writer, sheet_name="BUDGETING", index=False)
+            budgeting_df.to_excel(writer, sheet_name="CANCEL-BUDGETING", index=False)
         if not clustered_df["CANCEL"].empty:
             clustered_df["CANCEL"].to_excel(
                 writer, sheet_name="CANCEL-CLUSTERED", index=False

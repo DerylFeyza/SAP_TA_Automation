@@ -6,7 +6,6 @@ from src.database.proactive_query import (
 import pandas as pd
 import pyperclip
 import os
-from io import StringIO
 
 
 def validate_rollback(df: pd.DataFrame):
@@ -119,6 +118,23 @@ def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
         df.columns = df.columns.str.strip()
         df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
 
+        numeric_columns = [
+            "Proj.cost plan",
+            "Budget",
+            "Release",
+            "Act.costs",
+        ]
+
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)
+                    .replace("", "0"),
+                    errors="coerce",
+                )
+
         return df
     except Exception as e:
         print(f"Error automating: {e}")
@@ -167,35 +183,62 @@ def validate_check_budgeting(session, cleaned_df: pd.DataFrame, date_identifier)
             df = pd.read_csv(
                 file_path,
                 sep="|",
-                skipinitialspace=True,
-                skiprows=[0, 2],
+                skiprows=[0, 1, 2, 3, 5],
                 encoding="utf-8",
             )
         except UnicodeDecodeError:
             df = pd.read_csv(
                 file_path,
                 sep="|",
-                skipinitialspace=True,
-                skiprows=[0, 2],
+                skiprows=[0, 1, 2, 3, 5],
                 encoding="latin1",
             )
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-        table_lines = [line for line in lines if line.strip().startswith("|")]
-        csv_like = "\n".join(
-            [
-                ",".join(col.strip() for col in line.strip("|").split("|"))
-                for line in table_lines
-            ]
-        )
-        df = pd.read_csv(StringIO(csv_like))
         df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
         df.columns = df.columns.str.strip()
         df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+        df = df[~df.iloc[:, 0].astype(str).str.contains(r"^-+$|^\*$", na=False)]
+        df = df.dropna(how="all")
 
         return df
     except Exception as e:
         print(f"Error validating has budgeting: {e}")
         return pd.DataFrame()
+
+
+def exclude_cancel_validated(
+    cancel_df: pd.DataFrame,
+    accost_df: pd.DataFrame,
+    reservation_df: pd.DataFrame,
+    budgeting_df: pd.DataFrame,
+):
+    try:
+        reservation_project_ids = reservation_df["project_id"].astype(str).tolist()
+        accost_project_ids = (
+            accost_df[
+                (accost_df["Title"].str.len() == 15) & (accost_df["Act.costs"] > 0)
+            ]["Title"]
+            .astype(str)
+            .tolist()
+        )
+        budgeting_project_ids = (
+            budgeting_df[
+                (budgeting_df["Description"] == "Budgeting")
+                & (budgeting_df["Available Budget Original"].notna())
+            ]["WBS element"]
+            .astype(str)
+            .str[:15]
+            .tolist()
+        )
+        cancel_df = cancel_df[
+            ~cancel_df["project_id_db"].astype(str).isin(reservation_project_ids)
+        ]
+        cancel_df = cancel_df[~cancel_df["Level2"].astype(str).isin(accost_project_ids)]
+        cancel_df = cancel_df[
+            ~cancel_df["Level2"].astype(str).isin(budgeting_project_ids)
+        ]
+
+        return cancel_df
+    except Exception as e:
+        print(f"Error excluding validated cancellations: {e}")
+        return cancel_df
