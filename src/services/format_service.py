@@ -1,11 +1,8 @@
 import pandas as pd
+from src.database.proactive_query import get_pid_report
 
 
 def clusterize_dfs(dfs: dict):
-    """
-    Add a 'Level1' column to each DataFrame in the dictionary.
-    Level1 is derived from the first 10 characters of the 'Title' column.
-    """
     clustered_dfs = {}
     for status, df in dfs.items():
         df["Level1"] = df["Title"].str[:10]
@@ -42,3 +39,21 @@ def clusterize_dfs(dfs: dict):
         clustered_dfs[status] = level1_counts
 
     return {"clustered": clustered_dfs, "status": dfs}
+
+
+def get_status_report(df: pd.DataFrame, updated_status):
+    print(df)
+    try:
+        level2_list = (
+            df[df["New User Status"] == updated_status]["Level2"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        results = get_pid_report(level2_list)
+        report_df = pd.DataFrame(results)
+        return report_df
+    except Exception as e:
+        print(f"Error generating status report: {e}")
+        return pd.DataFrame()

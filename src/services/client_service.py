@@ -87,16 +87,19 @@ def loginConnection(sapGUIClient):
         if popup:
             text = popup.text
             print("⚠️ SAP Multiple Logon Popup detected:", text)
-
             return {
                 "status": "error",
+                "error": "MTPLG",
                 "message": "Multiple logon detected. Please resolve manually.",
             }
 
-        # print(session.Info.ScreenNumber)
         session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
         session.findById("wnd[0]").sendVKey(0)
         return {"status": "connected", "active": True, "session": session}
     except Exception as e:
         print("❌ Error logging into SAP.")
         print("Error:", e)
+        return {
+            "status": "error",
+            "message": "Login Unsuccessful",
+        }

@@ -2,18 +2,16 @@ import os
 import time
 import pandas as pd
 import pyperclip
-import multiprocessing as mp
 import pythoncom
 import win32com.client
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from src.services.format_service import get_status_report
 
 
-def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier):
+def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: dict):
     try:
         processed_statuses = cleaned_df["Status To Be"].unique()
         print(processed_statuses)
-        status_dfs = {}
-
         session.StartTransaction("CNMASSSTATUS")
         session.findById("wnd[1]/usr/ctxtTCNT-PROF_DB").text = "000000000001"
         session.findById("wnd[1]").sendVKey(0)
@@ -58,24 +56,42 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier):
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
 
             file_path = os.path.join(os.getenv("SAP_OUTPUT_PATH"), filename)
-            df = pd.read_csv(file_path, sep="|", skipinitialspace=True, skiprows=[0, 2])
+
+            try:
+                df = pd.read_csv(
+                    file_path,
+                    sep="|",
+                    skipinitialspace=True,
+                    skiprows=[0, 2],
+                    encoding="utf-8",
+                )
+            except UnicodeDecodeError:
+                df = pd.read_csv(
+                    file_path,
+                    sep="|",
+                    skipinitialspace=True,
+                    skiprows=[0, 2],
+                    encoding="latin1",
+                )
+
             df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
             df.columns = df.columns.str.strip()
             df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
             df = df[~df["Level"].isin([0, 1])]
             status_dfs[status] = df
 
-        print(status_dfs)
+            print(status_dfs["BAST"])
+
         return status_dfs
     except Exception as e:
         print(f"Error automating: {e}")
         return None
 
 
-def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
+def execute_bast(status_dfs: pd.DataFrame, date_identifier):
     try:
         print("executing")
-        bast_df = clusterized_dfs["BAST"]
+        bast_df = status_dfs["BAST"]
         bast_df = bast_df.dropna(subset=["Cluster"])
         max_cluster = bast_df["Cluster"].max()
 
@@ -121,6 +137,7 @@ def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
                 "wnd[1]/usr/sub/1[0,0]/sub/1/2[0,0]/sub/1/2/7[0,7]/lbl[1,7]"
             ).caretPosition = 6
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
+            session.findById("wnd[0]/usr/ctxtPROF").text = "ZTA01"
             session.findById("wnd[0]/usr/cmbUUSR").key = "BNOV"
             session.findById("wnd[0]/usr/chkTEST").selected = False
             session.findById("wnd[0]").sendVKey(8)
@@ -153,6 +170,7 @@ def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
                     )
                 )
 
+            status_map = {}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -175,6 +193,14 @@ def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
                         executed_bast["session_id"] = result["session"]
                         executed_bast["cluster_id"] = result["cluster"]
                         executed_results.append(executed_bast)
+                        status_map.update(
+                            dict(
+                                zip(
+                                    executed_bast["Object Key"],
+                                    executed_bast["New User Status"],
+                                )
+                            )
+                        )
                     except Exception as e:
                         print(f"Error reading {full_path}: {e}")
 
@@ -183,14 +209,16 @@ def execute_bast(clusterized_dfs: pd.DataFrame, date_identifier):
             if executed_results
             else pd.DataFrame()
         )
-        return executed_bast
+        bast_df = bast_df.copy()
+        bast_df["New User Status"] = bast_df["Title"].map(status_map)
+        status_dfs["BAST"] = bast_df
+        return {"executed": executed_bast, "status": status_dfs}
     except Exception as e:
         print(f"Error automating: {e}")
         return None
 
 
 def bulk_execute_session(session_id, status, cluster, date_identifier):
-    """Worker that runs in its own process"""
     pythoncom.CoInitialize()
     SapGuiAuto = win32com.client.GetObject("SAPGUI")
     application = SapGuiAuto.GetScriptingEngine

@@ -10,6 +10,7 @@ mysqlpool = pooling.MySQLConnectionPool(
     password=os.getenv("PROACTIVE_PASSWORD"),
     database=os.getenv("PROACTIVE_DATABASE"),
     port=3306,
+    connection_timeout=10,
 )
 
 

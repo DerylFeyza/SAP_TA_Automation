@@ -1,4 +1,3 @@
-# fastapi_server.py
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
 import win32com.client
@@ -13,9 +12,10 @@ from src.services.client_service import (
 from src.database.proactive_query import get_pid_rollback
 from src.services.validation_service import validate_rollback
 from src.services.automation_service import get_pid_sap, execute_bast
-from src.services.format_service import clusterize_dfs
+from src.services.format_service import clusterize_dfs, get_status_report
 from io import BytesIO
 import pandas as pd
+from fastapi import HTTPException
 
 app = FastAPI()
 
@@ -37,7 +37,12 @@ async def upload_excel(file: UploadFile = File(...)):
         checkLogin["status"] == "not logged in"
         or checkLogin["status"] == "no connection"
     ):
-        session = loginConnection(sapClient)["session"]
+        loginResult = loginConnection(sapClient)
+        if loginResult["status"] == "error":
+            raise HTTPException(
+                status_code=500, detail=loginResult.get("message", "SAP login failed")
+            )
+        session = loginResult["session"]
     else:
         session = checkLogin["session"]
 
@@ -53,17 +58,23 @@ async def upload_excel(file: UploadFile = File(...)):
     cleaned_df = validate_rollback_result["cleaned"]
     rollback_df = validate_rollback_result["rollback"]
 
-    status_dfs = get_pid_sap(session, cleaned_df, date_identifier)
+    status_dfs = {}
+    status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
     clustered_res = clusterize_dfs(status_dfs)
-    status_processed_df = clustered_res["status"]
+    status_dfs = clustered_res["status"]
     clustered_df = clustered_res["clustered"]
-    executed_bast = execute_bast(status_dfs, date_identifier)
+
+    result_executed = execute_bast(status_dfs, date_identifier)
+    executed_bast_df = result_executed["executed"]
+    status_dfs = result_executed["status"]
+    bast_report_df = get_status_report(status_dfs["BAST"], "BNOV")
     draft = BytesIO()
     with pd.ExcelWriter(draft, engine="openpyxl") as writer:
         original_df.to_excel(writer, sheet_name="Format", index=False)
+        cleaned_df.to_excel(writer, sheet_name="cleaned", index=False)
         if not rollback_df.empty:
             rollback_df.to_excel(writer, sheet_name="rollback", index=False)
-        for status, df in status_processed_df.items():
+        for status, df in status_dfs.items():
             sheet_name = sheet_name = (
                 str(status)[:31].replace("/", "_").replace("\\", "_")
             )
@@ -73,8 +84,10 @@ async def upload_excel(file: UploadFile = File(...)):
                 str(status)[:31].replace("/", "_").replace("\\", "_") + "_CLUSTERED"
             )
             df.to_excel(writer, sheet_name=sheet_name, index=False)
-        if not executed_bast.empty:
-            executed_bast.to_excel(writer, sheet_name="EXECUTED-BAST", index=False)
+        if not executed_bast_df.empty:
+            executed_bast_df.to_excel(writer, sheet_name="EXECUTED-BAST", index=False)
+        if not bast_report_df.empty:
+            bast_report_df.to_excel(writer, sheet_name="REPORT-BAST", index=False)
 
     draft.seek(0)
     return StreamingResponse(
