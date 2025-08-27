@@ -102,24 +102,26 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: 
         return None
 
 
-def execute_bast(status_dfs: pd.DataFrame, date_identifier):
+def start_necessary_session(connection, max_cluster):
+    while connection.Children.Count < max_cluster:
+        print(f"Current session count: {connection.Children.Count}")
+        print(f"Current max cluster: {max_cluster}")
+        session0 = connection.Children(0)
+        session0.SendCommand("/oCNMASSSTATUS")
+        time.sleep(1)
+    print(f"Max cluster: {max_cluster}")
+
+
+def execute_bast(status_dfs: dict, date_identifier):
     try:
-        print("executing")
         bast_df = status_dfs["BAST"]
         bast_df = bast_df.dropna(subset=["Cluster"])
         max_cluster = bast_df["Cluster"].max()
-
         SapGuiAuto = win32com.client.GetObject("SAPGUI")
         application = SapGuiAuto.GetScriptingEngine
         connection = application.Children(0)
 
-        while connection.Children.Count < max_cluster:
-            print(f"Current session count: {connection.Children.Count}")
-            print(f"Current max cluster: {max_cluster}")
-            session0 = connection.Children(0)
-            session0.SendCommand("/oCNMASSSTATUS")
-            time.sleep(1)
-        print(f"Max cluster: {max_cluster}")
+        start_necessary_session(connection, max_cluster)
 
         cluster_map = {
             cluster: idx for idx, cluster in enumerate(bast_df["Cluster"].unique())
@@ -169,6 +171,185 @@ def execute_bast(status_dfs: pd.DataFrame, date_identifier):
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
             session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectAll()
 
+        bulk_session_result = bulk_session_orchestrator(
+            cluster_id, session_id, cluster_map, date_identifier, "BAST"
+        )
+
+        bast_df = bast_df.copy()
+        bast_df["New User Status"] = bast_df["Title"].map(bulk_session_result["status"])
+        status_dfs["BAST"] = bast_df
+        bast_report_df = get_status_report(status_dfs["BAST"], "BNOV")
+        return {
+            "executed": bulk_session_result["executed"],
+            "status": status_dfs,
+            "report": bast_report_df,
+        }
+    except Exception as e:
+        print(f"Error automating BAST: {e}")
+        return None
+
+
+def execute_cancel(status_dfs: dict, date_identifier):
+    try:
+        cancel_df = status_dfs["CANCEL"]
+        cancel_df = cancel_df.dropna(subset=["Cluster"])
+        max_cluster = cancel_df["Cluster"].max()
+
+        SapGuiAuto = win32com.client.GetObject("SAPGUI")
+        application = SapGuiAuto.GetScriptingEngine
+        connection = application.Children(0)
+
+        start_necessary_session(connection, max_cluster)
+
+        cluster_map = {
+            cluster: idx for idx, cluster in enumerate(cancel_df["Cluster"].unique())
+        }
+
+        for cluster_id, df_chunk in cancel_df.groupby("Cluster"):
+            session_id = cluster_map[cluster_id]
+            print(f"Session ID: {session_id}")
+            print(f"Processing cluster: {cluster_id}, session: {session_id}")
+            session = connection.Children(session_id)
+            session.findById("wnd[0]").maximize()
+            session.findById("wnd[0]").sendVKey(0)
+            session.StartTransaction("CNMASSSTATUS")
+            project_ids = df_chunk["Title"].astype(str).tolist()
+            pyperclip.copy("\r\n".join(project_ids))
+            session.findById("wnd[0]/usr/btn%_CN_PSPNR_%_APP_%-VALU_PUSH").press()
+            session.findById("wnd[1]/tbar[0]/btn[16]").press()
+            session.findById("wnd[1]/tbar[0]/btn[24]").press()
+            session.findById("wnd[1]/tbar[0]/btn[8]").press()
+            session.findById("wnd[0]/usr/chkUSR").selected = False
+            session.findById("wnd[0]/usr/chkSYS").selected = True
+            session.findById("wnd[0]/usr/txtCN_STUFE-LOW").text = "2"
+            session.findById("wnd[0]/usr/cmbSSYS").key = "DLFL"
+            session.findById("wnd[0]/usr/chkTEST").selected = False
+            session.findById("wnd[0]").sendVKey(8)
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").setCurrentCell(
+                -1, "WBS"
+            )
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectColumn("WBS")
+            session.findById("wnd[0]/tbar[1]/btn[29]").press()
+            session.findById(
+                "wnd[1]/usr/ssub%_SUBSCREEN_FREESEL:SAPLSSEL:1105/btn%_%%DYN001_%_APP_%-VALU_PUSH"
+            ).press()
+            session.findById("wnd[2]/tbar[0]/btn[16]").press()
+            session.findById("wnd[2]/tbar[0]/btn[24]").press()
+            session.findById("wnd[2]/tbar[0]/btn[8]").press()
+            session.findById("wnd[1]/tbar[0]/btn[0]").press()
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectAll()
+
+        bulk_session_result = bulk_session_orchestrator(
+            cluster_id, session_id, cluster_map, date_identifier, "CANCEL"
+        )
+
+        cancel_df = cancel_df.copy()
+        cancel_df["New User Status"] = cancel_df["Title"].map(
+            bulk_session_result["status"]
+        )
+        status_dfs["CANCEL"] = cancel_df
+        return {
+            "executed": bulk_session_result["executed"],
+            "status": status_dfs,
+        }
+    except Exception as e:
+        print(f"Error automating CANCEL: {e}")
+        return None
+
+
+def execute_close(status_dfs: dict, date_identifier):
+    try:
+        close_df = status_dfs["CLOSE"]
+        close_df = close_df[
+            ~close_df["Status"]
+            .astype(str)
+            .str.contains("CL(NV)?", case=False, na=False)
+        ]
+        close_df = close_df.dropna(subset=["Cluster"])
+
+        max_cluster = close_df["Cluster"].max()
+
+        SapGuiAuto = win32com.client.GetObject("SAPGUI")
+        application = SapGuiAuto.GetScriptingEngine
+        connection = application.Children(0)
+
+        start_necessary_session(connection, max_cluster)
+
+        cluster_map = {
+            cluster: idx for idx, cluster in enumerate(close_df["Cluster"].unique())
+        }
+
+        for cluster_id, df_chunk in close_df.groupby("Cluster"):
+            session_id = cluster_map[cluster_id]
+            print(f"Session ID: {session_id}")
+            print(f"Processing cluster: {cluster_id}, session: {session_id}")
+            session = connection.Children(session_id)
+            session.findById("wnd[0]").maximize()
+            session.findById("wnd[0]").sendVKey(0)
+            session.StartTransaction("CNMASSSTATUS")
+            project_ids = df_chunk["Title"].astype(str).tolist()
+            pyperclip.copy("\r\n".join(project_ids))
+            session.findById("wnd[0]/usr/btn%_CN_PSPNR_%_APP_%-VALU_PUSH").press()
+            session.findById("wnd[1]/tbar[0]/btn[16]").press()
+            session.findById("wnd[1]/tbar[0]/btn[24]").press()
+            session.findById("wnd[1]/tbar[0]/btn[8]").press()
+            session.findById("wnd[0]/usr/chkUSR").selected = True
+            session.findById("wnd[0]/usr/chkSYS").selected = True
+            session.findById("wnd[0]/usr/cmbSSYS").key = "TECO"
+            session.findById("wnd[0]/usr/txtCN_STUFE-LOW").text = "2"
+            session.findById("wnd[0]/usr/ctxtPROF").setFocus()
+            session.findById("wnd[0]/usr/ctxtPROF").caretPosition = 0
+            session.findById("wnd[0]").sendVKey(4)
+            session.findById(
+                "wnd[1]/usr/sub/1[0,0]/sub/1/2[0,0]/sub/1/2/7[0,7]/lbl[1,7]"
+            ).setFocus()
+            session.findById(
+                "wnd[1]/usr/sub/1[0,0]/sub/1/2[0,0]/sub/1/2/7[0,7]/lbl[1,7]"
+            ).caretPosition = 6
+            session.findById("wnd[1]/tbar[0]/btn[0]").press()
+            session.findById("wnd[0]/usr/ctxtPROF").text = "ZTA01"
+            session.findById("wnd[0]/usr/cmbUUSR").key = "CLNV"
+            session.findById("wnd[0]/usr/chkTEST").selected = False
+            session.findById("wnd[0]").sendVKey(8)
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").setCurrentCell(
+                -1, "WBS"
+            )
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectColumn("WBS")
+            session.findById("wnd[0]/tbar[1]/btn[29]").press()
+            session.findById(
+                "wnd[1]/usr/ssub%_SUBSCREEN_FREESEL:SAPLSSEL:1105/btn%_%%DYN001_%_APP_%-VALU_PUSH"
+            ).press()
+            session.findById("wnd[2]/tbar[0]/btn[16]").press()
+            session.findById("wnd[2]/tbar[0]/btn[24]").press()
+            session.findById("wnd[2]/tbar[0]/btn[8]").press()
+            session.findById("wnd[1]/tbar[0]/btn[0]").press()
+            session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectAll()
+
+        bulk_session_result = bulk_session_orchestrator(
+            cluster_id, session_id, cluster_map, date_identifier, "CLOSE"
+        )
+
+        close_df = close_df.copy()
+        close_df["New User Status"] = close_df["Title"].map(
+            bulk_session_result["status"]
+        )
+        status_dfs["CLOSE"] = close_df
+        bast_report_df = get_status_report(status_dfs["CLOSE"], "CLNV")
+
+        return {
+            "executed": bulk_session_result["executed"],
+            "status": status_dfs,
+            "report": bast_report_df,
+        }
+    except Exception as e:
+        print(f"Error automating CLOSE: {e}")
+        return None
+
+
+def bulk_session_orchestrator(
+    cluster_id, session_id, cluster_map, date_identifier, executed_status
+):
+    try:
         futures = []
         executed_results = []
         with ProcessPoolExecutor() as executor:
@@ -178,7 +359,7 @@ def execute_bast(status_dfs: pd.DataFrame, date_identifier):
                     executor.submit(
                         bulk_execute_session,
                         session_id,
-                        "BAST",
+                        executed_status,
                         cluster_id,
                         date_identifier,
                     )
@@ -193,47 +374,43 @@ def execute_bast(status_dfs: pd.DataFrame, date_identifier):
                     )
                     print(f"Reading file: {full_path}")
                     try:
-                        executed_bast = pd.read_csv(
+                        executed_cluster = pd.read_csv(
                             full_path, sep="|", skipinitialspace=True, skiprows=[0, 2]
                         )
-                        executed_bast = executed_bast.loc[
-                            :, ~executed_bast.columns.str.contains("^Unnamed")
+                        executed_cluster = executed_cluster.loc[
+                            :, ~executed_cluster.columns.str.contains("^Unnamed")
                         ]
-                        executed_bast.columns = executed_bast.columns.str.strip()
-                        executed_bast = executed_bast.map(
+                        executed_cluster.columns = executed_cluster.columns.str.strip()
+                        executed_cluster = executed_cluster.map(
                             lambda x: x.strip() if isinstance(x, str) else x
                         )
-                        executed_bast = executed_bast.dropna(how="all")
-                        executed_bast["session_id"] = result["session"]
-                        executed_bast["cluster_id"] = result["cluster"]
-                        executed_results.append(executed_bast)
+                        executed_cluster = executed_cluster.dropna(how="all")
+                        executed_cluster["session_id"] = result["session"]
+                        executed_cluster["cluster_id"] = result["cluster"]
+                        executed_results.append(executed_cluster)
                         status_map.update(
                             dict(
                                 zip(
-                                    executed_bast["Object Key"],
-                                    executed_bast["New User Status"],
+                                    executed_cluster["Object Key"],
+                                    executed_cluster["New User Status"],
                                 )
                             )
                         )
                     except Exception as e:
                         print(f"Error reading {full_path}: {e}")
 
-        executed_bast = (
+        executed_cluster = (
             pd.concat(executed_results, ignore_index=True)
             if executed_results
             else pd.DataFrame()
         )
-        bast_df = bast_df.copy()
-        bast_df["New User Status"] = bast_df["Title"].map(status_map)
-        status_dfs["BAST"] = bast_df
-        bast_report_df = get_status_report(status_dfs["BAST"], "BNOV")
+
         return {
-            "executed": executed_bast,
-            "status": status_dfs,
-            "report": bast_report_df,
+            "executed": executed_cluster,
+            "status": status_map,
         }
     except Exception as e:
-        print(f"Error automating: {e}")
+        print(f"Error orchestrating bulk execute: {e}")
         return None
 
 

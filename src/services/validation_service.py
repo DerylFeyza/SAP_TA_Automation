@@ -213,6 +213,8 @@ def exclude_cancel_validated(
     budgeting_df: pd.DataFrame,
 ):
     try:
+        excluded_df = pd.DataFrame(columns=cancel_df.columns)
+
         reservation_project_ids = reservation_df["project_id"].astype(str).tolist()
         accost_project_ids = (
             accost_df[
@@ -221,24 +223,89 @@ def exclude_cancel_validated(
             .astype(str)
             .tolist()
         )
+
         budgeting_project_ids = (
             budgeting_df[
                 (budgeting_df["Description"] == "Budgeting")
-                & (budgeting_df["Available Budget Original"].notna())
+                & (
+                    pd.to_numeric(
+                        budgeting_df["Available Budget Original"], errors="coerce"
+                    )
+                    > 0
+                )
             ]["WBS element"]
             .astype(str)
             .str[:15]
             .tolist()
         )
-        cancel_df = cancel_df[
+
+        reservation_excluded = cancel_df[
+            cancel_df["project_id_db"].astype(str).isin(reservation_project_ids)
+        ]
+        reservation_excluded["reason"] = "Has Existing Reservation"
+        excluded_df = pd.concat([excluded_df, reservation_excluded])
+
+        accost_excluded = cancel_df[
+            cancel_df["Level2"].astype(str).isin(accost_project_ids)
+        ]
+        accost_excluded["reason"] = "Has Actual Cost"
+        excluded_df = pd.concat([excluded_df, accost_excluded])
+
+        budgeting_excluded = cancel_df[
+            cancel_df["Level2"].astype(str).isin(budgeting_project_ids)
+        ]
+        budgeting_excluded["reason"] = "Has Budgeting"
+        excluded_df = pd.concat([excluded_df, budgeting_excluded])
+
+        filtered_df = cancel_df[
             ~cancel_df["project_id_db"].astype(str).isin(reservation_project_ids)
         ]
-        cancel_df = cancel_df[~cancel_df["Level2"].astype(str).isin(accost_project_ids)]
-        cancel_df = cancel_df[
-            ~cancel_df["Level2"].astype(str).isin(budgeting_project_ids)
+        filtered_df = filtered_df[
+            ~filtered_df["Level2"].astype(str).isin(accost_project_ids)
+        ]
+        filtered_df = filtered_df[
+            ~filtered_df["Level2"].astype(str).isin(budgeting_project_ids)
         ]
 
-        return cancel_df
+        return {"filtered": filtered_df, "excluded": excluded_df}
     except Exception as e:
         print(f"Error excluding validated cancellations: {e}")
-        return cancel_df
+        return {"filtered": cancel_df, "excluded": pd.DataFrame()}
+
+
+def validate_cancel(session, status_dfs: dict, date_identifier):
+    try:
+        actual_cost_df = validate_actual_cost(
+            session, status_dfs["CANCEL"], date_identifier
+        )
+
+        reservation_df = validate_has_reservation(status_dfs["CANCEL"])
+
+        budgeting_df = validate_check_budgeting(
+            session, status_dfs["CANCEL"], date_identifier
+        )
+
+        exclude_res = exclude_cancel_validated(
+            status_dfs["CANCEL"], actual_cost_df, reservation_df, budgeting_df
+        )
+
+        status_dfs["CANCEL"] = exclude_res["filtered"]
+        status_dfs["CANCEL"].dropna(how="all")
+        excluded_df = exclude_res["excluded"]
+
+        return {
+            "accost": actual_cost_df,
+            "reservation": reservation_df,
+            "budgeting": budgeting_df,
+            "status": status_dfs,
+            "excluded": excluded_df,
+        }
+    except Exception as e:
+        print(f"Error validating cancel: {e}")
+        return {
+            "accost": pd.DataFrame(),
+            "reservation": pd.DataFrame(),
+            "budgeting": pd.DataFrame(),
+            "status": status_dfs,
+            "excluded": pd.DataFrame(),
+        }

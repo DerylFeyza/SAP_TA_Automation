@@ -2,6 +2,8 @@ from src.lib.mysql import query
 
 
 def get_pid_rollback(project_ids: list[str]):
+    if not project_ids:
+        return []
     placeholders = ", ".join(["%s"] * len(project_ids))
     sql = f"""
         SELECT a.*
@@ -14,6 +16,8 @@ def get_pid_rollback(project_ids: list[str]):
 
 
 def get_pid_report(level2: list[str]):
+    if not level2:
+        return []
     placeholders = ", ".join(["%s"] * len(level2))
     sql = f"""
         SELECT a.project_id, a.project_id_sap, b.phase_name, b.phase_id, c.status, a.current_user_status_sap
@@ -35,6 +39,8 @@ def update_status_proactive(project_ids: list[str]):
 
 
 def get_reservation(project_ids: list[str]):
+    if not project_ids:
+        return []
     sql = f"""
         SELECT DISTINCT a.project_id From alista_v3.t_reservation a 
         WHERE a.project_id IN ({", ".join(["%s"] * len(project_ids))})
