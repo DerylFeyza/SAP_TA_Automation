@@ -126,3 +126,12 @@ def getSession():
         session = checkLogin["session"]
 
     return {"error": False, "session": session}
+
+
+def logout():
+    SapGuiAuto = win32com.client.GetObject("SAPGUI")
+    application = SapGuiAuto.GetScriptingEngine
+    connection = application.Children(0)
+    session = connection.Children(0)
+    session.findById("wnd[0]").close()
+    session.findById("wnd[1]/usr/btnSPOP-OPTION1").press()
