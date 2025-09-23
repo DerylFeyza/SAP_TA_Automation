@@ -48,6 +48,7 @@ async def upload_excel(file: UploadFile = File(...)):
 
         status_dfs = {}
         status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
+        validated_cancel_res = None
         if (
             status_dfs.get("CLOSE") is not None
             and not status_dfs.get("CLOSE").dropna(how="all").empty
@@ -319,8 +320,3 @@ async def validateCancel(file: UploadFile = File(...)):
         logout()
         return {"error": True, "message": str(e)}
 
-
-@app.post("/test")
-async def test_endpoint():
-    results = get_pid_rollback(["W27-314/2023", "W28-111/2023"])
-    return {"message": "This is a test endpoint", "data": results}

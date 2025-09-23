@@ -7,36 +7,47 @@ def clusterize_dfs(dfs: dict):
     try:
         clustered_dfs = {}
         for status, df in dfs.items():
-            level1_counts = df["Level1"].value_counts().reset_index()
+            df = df.copy()
+
+            if status.upper() == "CLOSE":
+                df_included = df[df["CurrentStatus"] != "CLNV"].copy()
+            elif status.upper() == "BAST":
+                df_included = df[df["CurrentStatus"] != "BNOV"].copy()
+            else:
+                df_included = df
+
+            level1_counts = df_included["Level1"].value_counts().reset_index()
             level1_counts.columns = ["Level1", "Count"]
 
             level1_counts = level1_counts.sort_values(
                 by="Count", ascending=False
             ).reset_index(drop=True)
 
-            num_clusters = min(6, len(level1_counts))
-            total_count = level1_counts["Count"].sum()
-
-            # if total_count < 1000:
-            #     num_clusters = 1
+            num_clusters = min(10, len(level1_counts))
 
             if num_clusters > 0:
                 cluster_totals = [0] * num_clusters
                 clusters = [0] * len(level1_counts)
 
-                # Assign each row to the cluster with the lowest total count
                 for idx, count in enumerate(level1_counts["Count"]):
                     min_cluster = cluster_totals.index(min(cluster_totals))
-                    clusters[idx] = min_cluster + 1  # Cluster numbers start from 1
+                    clusters[idx] = min_cluster + 1
                     cluster_totals[min_cluster] += count
 
                 level1_counts["Cluster"] = clusters
                 level1_to_cluster = dict(
                     zip(level1_counts["Level1"], level1_counts["Cluster"])
                 )
+
                 df["Cluster"] = df["Level1"].map(level1_to_cluster)
 
+                if status.upper() == "CLOSE":
+                    df.loc[df["CurrentStatus"] == "CLNV", "Cluster"] = None
+                elif status.upper() == "BAST":
+                    df.loc[df["CurrentStatus"] == "BNOV", "Cluster"] = None
+
             clustered_dfs[status] = level1_counts
+            dfs[status] = df
 
         return {"clustered": clustered_dfs, "status": dfs}
     except Exception as e:

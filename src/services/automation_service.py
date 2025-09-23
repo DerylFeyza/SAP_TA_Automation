@@ -62,28 +62,69 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: 
             file_path = os.path.join(os.getenv("SAP_OUTPUT_PATH"), filename)
 
             try:
-                df = pd.read_csv(
-                    file_path,
-                    sep="|",
-                    skipinitialspace=True,
-                    skiprows=[0, 2],
-                    encoding="utf-8",
-                )
-            except UnicodeDecodeError:
-                df = pd.read_csv(
-                    file_path,
-                    sep="|",
-                    skipinitialspace=True,
-                    skiprows=[0, 2],
-                    encoding="latin1",
-                )
+                # First, determine the expected number of columns
+                with open(file_path, "r", encoding="utf-8") as f:
+                    # Skip first line
+                    f.readline()
+                    # Read header line
+                    header = f.readline()
+                    # Count expected columns
+                    expected_columns = header.count("|") + 1
 
-            df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+                # Custom parsing function to handle lines with extra separators
+                def process_line(line):
+                    fields = line.strip().split("|")
+                    if len(fields) > expected_columns:
+                        # Combine extra fields with the last expected field
+                        fields[expected_columns - 1] = "|".join(
+                            fields[expected_columns - 1 :]
+                        )
+                        fields = fields[:expected_columns]
+                    return fields
+
+                # Read the file line by line and process
+                with open(file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                # Extract header and data (skipping rows 0 and 2)
+                header = [col.strip() for col in lines[1].split("|")]
+                data = [process_line(line) for line in lines[3:]]
+
+                # Create DataFrame from processed data
+                df = pd.DataFrame(data, columns=header)
+
+            except UnicodeDecodeError:
+                # Do the same for latin1 encoding
+                with open(file_path, "r", encoding="latin1") as f:
+                    # Skip first line
+                    f.readline()
+                    # Read header line
+                    header = f.readline()
+                    # Count expected columns
+                    expected_columns = header.count("|") + 1
+
+                # Read the file line by line and process
+                with open(file_path, "r", encoding="latin1") as f:
+                    lines = f.readlines()
+
+                # Extract header and data (skipping rows 0 and 2)
+                header = [col.strip() for col in lines[1].split("|")]
+                data = [process_line(line) for line in lines[3:]]
+
+                # Create DataFrame from processed data
+                df = pd.DataFrame(data, columns=header)
+
+            df = df.loc[
+                :, ~df.columns.str.contains("^Unnamed") & (df.columns.str.strip() != "")
+            ]
             df.columns = df.columns.str.strip()
             df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+            df = df[~df["Title"].isin(["", None])]
+            df["Level"] = df["Level"].astype(int)
             df = df[~df["Level"].isin([0, 1])]
             df["Level1"] = df["Title"].str[:10]
             df["Level2"] = df["Title"].str[:15]
+            df["CurrentStatus"] = df["Status"].astype(str).str[-4:]
 
             mapping_df = cleaned_df[
                 ["project_id_sap", "project_id_db"]
@@ -260,13 +301,7 @@ def execute_cancel(status_dfs: dict, date_identifier):
 def execute_close(status_dfs: dict, date_identifier):
     try:
         close_df = status_dfs["CLOSE"]
-        close_df = close_df[
-            ~close_df["Status"]
-            .astype(str)
-            .str.contains("CL(NV)?", case=False, na=False)
-        ]
         close_df = close_df.dropna(subset=["Cluster"])
-
         max_cluster = close_df["Cluster"].max()
 
         SapGuiAuto = win32com.client.GetObject("SAPGUI")
@@ -282,7 +317,9 @@ def execute_close(status_dfs: dict, date_identifier):
         for cluster_id, df_chunk in close_df.groupby("Cluster"):
             session_id = cluster_map[cluster_id]
             print(f"Session ID: {session_id}")
-            print(f"Processing cluster: {cluster_id}, session: {session_id}")
+            print(
+                f"Processing cluster: {cluster_id}, session: {session_id}, rows: {len(df_chunk)}"
+            )
             session = connection.Children(session_id)
             session.findById("wnd[0]").maximize()
             session.findById("wnd[0]").sendVKey(0)

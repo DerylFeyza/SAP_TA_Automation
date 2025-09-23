@@ -29,7 +29,7 @@ def get_pid_report(level2: list[str]):
     return query(sql, tuple(level2))
 
 
-def update_status_proactive(project_ids: list[str]):
+def update_status_proactive_bnov(project_ids: list[str]):
     sql = f"""
         UPDATE proactive2.projects a
         SET a.project_status_id = 6, a.current_user_status_sap = 'BNOV', a.phase_id = '4'
