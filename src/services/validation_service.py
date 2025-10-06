@@ -123,6 +123,7 @@ def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
             "Budget",
             "Release",
             "Act.costs",
+            "Actual costs"
         ]
 
         for col in numeric_columns:
@@ -218,7 +219,7 @@ def exclude_cancel_validated(
         reservation_project_ids = reservation_df["project_id"].astype(str).tolist()
         accost_project_ids = (
             accost_df[
-                (accost_df["Title"].str.len() == 15) & (accost_df["Act.costs"] > 0)
+                (accost_df["Title"].str.len() == 15) & (accost_df["Actual costs"] > 0)
             ]["Title"]
             .astype(str)
             .tolist()
@@ -254,6 +255,7 @@ def exclude_cancel_validated(
         budgeting_excluded = cancel_df[
             cancel_df["Level2"].astype(str).isin(budgeting_project_ids)
         ]
+        
         budgeting_excluded["reason"] = "Has Budgeting"
         excluded_df = pd.concat([excluded_df, budgeting_excluded])
 
@@ -274,6 +276,7 @@ def exclude_cancel_validated(
 
 
 def validate_cancel(session, status_dfs: dict, date_identifier):
+    print("Validating CANCEL status...")
     try:
         actual_cost_df = validate_actual_cost(
             session, status_dfs["CANCEL"], date_identifier

@@ -50,8 +50,8 @@ async def upload_excel(file: UploadFile = File(...)):
         status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
         validated_cancel_res = None
         if (
-            status_dfs.get("CLOSE") is not None
-            and not status_dfs.get("CLOSE").dropna(how="all").empty
+            status_dfs.get("CANCEL") is not None
+            and not status_dfs.get("CANCEL").dropna(how="all").empty
         ):
             validated_cancel_res = validate_cancel(session, status_dfs, date_identifier)
             status_dfs = validated_cancel_res["status"]
@@ -201,6 +201,8 @@ async def clusterize(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         original_df = pd.read_excel(file_path, sheet_name="Format")
+        
+        
 
         validate_rollback_result = validate_rollback(original_df)
         if validate_rollback_result.get("error") == True:
@@ -210,10 +212,23 @@ async def clusterize(file: UploadFile = File(...)):
         rollback_df = validate_rollback_result["rollback"]
 
         status_dfs = {}
+        print("is there error here")
         status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
+        print("initetetes", status_dfs)
+        
+        validated_cancel_res = None
+        if (
+            status_dfs["CANCEL"] is not None
+            and not status_dfs["CANCEL"].dropna(how="all").empty
+        ):
+            validated_cancel_res = validate_cancel(session, status_dfs, date_identifier)
+            status_dfs = validated_cancel_res["status"]
+            
         clustered_res = clusterize_dfs(status_dfs)
         status_dfs = clustered_res["status"]
         clustered_df = clustered_res["clustered"]
+        
+       
 
         draft = BytesIO()
         with pd.ExcelWriter(draft, engine="openpyxl") as writer:
@@ -231,6 +246,23 @@ async def clusterize(file: UploadFile = File(...)):
                     str(status)[:31].replace("/", "_").replace("\\", "_") + "_CLUSTERED"
                 )
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
+                
+            if not validated_cancel_res["reservation"].dropna(how="all").empty:
+                validated_cancel_res["reservation"].to_excel(
+                    writer, sheet_name="CANCEL-RESERVATION", index=False
+                )
+            if not validated_cancel_res["budgeting"].dropna(how="all").empty:
+                validated_cancel_res["budgeting"].to_excel(
+                    writer, sheet_name="CANCEL-BUDGETING", index=False
+                )
+            if not validated_cancel_res["excluded"].dropna(how="all").empty:
+                validated_cancel_res["excluded"].to_excel(
+                    writer, sheet_name="CANCEL-EXCLUDED", index=False
+                )
+            if not validated_cancel_res["accost"].dropna(how="all").empty:
+                validated_cancel_res["accost"].to_excel(
+                    writer, sheet_name="CANCEL-ACTUALCOST", index=False
+                )
 
         draft.seek(0)
         logout()

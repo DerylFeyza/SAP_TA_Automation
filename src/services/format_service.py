@@ -23,7 +23,7 @@ def clusterize_dfs(dfs: dict):
                 by="Count", ascending=False
             ).reset_index(drop=True)
 
-            num_clusters = min(10, len(level1_counts))
+            num_clusters = min(12, len(level1_counts))
 
             if num_clusters > 0:
                 cluster_totals = [0] * num_clusters
