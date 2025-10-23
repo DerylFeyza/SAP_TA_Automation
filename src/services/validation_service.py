@@ -104,6 +104,7 @@ def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
                 skipinitialspace=True,
                 skiprows=[0, 2],
                 encoding="utf-8",
+                dtype= str
             )
         except UnicodeDecodeError:
             df = pd.read_csv(
@@ -112,8 +113,9 @@ def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
                 skipinitialspace=True,
                 skiprows=[0, 2],
                 encoding="latin1",
+                dtype= str
             )
-
+            
         df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
         df.columns = df.columns.str.strip()
         df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
@@ -123,6 +125,8 @@ def validate_actual_cost(session, cancel_df: pd.DataFrame, date_identifier):
             "Budget",
             "Release",
             "Act.costs",
+            "Ttl cost commitment",
+            "Act.revs",
             "Actual costs"
         ]
 
@@ -200,6 +204,25 @@ def validate_check_budgeting(session, cleaned_df: pd.DataFrame, date_identifier)
         df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
         df = df[~df.iloc[:, 0].astype(str).str.contains(r"^-+$|^\*$", na=False)]
         df = df.dropna(how="all")
+        df = df[df["Description"] == "Budgeting"]
+        
+        numeric_columns = [
+        "Available Budget Original",
+        "TCurr",
+        "Available Budget Release",
+        "TCurr.1",
+        "Currency"
+        ]
+        
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)
+                    .replace("", "0"),
+                    errors="coerce",
+                )
 
         return df
     except Exception as e:
@@ -219,7 +242,10 @@ def exclude_cancel_validated(
         reservation_project_ids = reservation_df["project_id"].astype(str).tolist()
         accost_project_ids = (
             accost_df[
-                (accost_df["Title"].str.len() == 15) & (accost_df["Actual costs"] > 0)
+                (accost_df["Title"].str.len() == 15) & 
+                ((accost_df["Actual costs"] > 0) | 
+                 (accost_df["Act.revs"] > 0) | 
+                 (accost_df["Ttl cost commitment"] > 0))
             ]["Title"]
             .astype(str)
             .tolist()

@@ -118,9 +118,12 @@ def getSession():
     ):
         loginResult = loginConnection(sapClient)
         if loginResult["status"] == "error":
-            raise HTTPException(
-                status_code=500, detail=loginResult.get("message", "SAP login failed")
-            )
+            return {
+            "error": True,
+            "message": loginResult.get("message", "SAP login failed"),
+            "status_code": 500,
+            "session": None
+            }
         session = loginResult["session"]
     else:
         session = checkLogin["session"]

@@ -32,7 +32,11 @@ async def upload_excel(file: UploadFile = File(...)):
         date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_filename = f"automate_{date_identifier}{file_extension}"
         file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-        session = getSession()["session"]
+        session_result = getSession()
+        if session_result["error"]:
+            return {"error": True, "message": session_result.get("message", "Could not establish SAP session.")}
+        
+        session = session_result["session"]
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -195,7 +199,11 @@ async def clusterize(file: UploadFile = File(...)):
         date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_filename = f"automate_{date_identifier}{file_extension}"
         file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-        session = getSession()["session"]
+        session_result = getSession()
+        if session_result["error"]:
+            return {"error": True, "message": session_result.get("message", "Could not establish SAP session.")}
+        
+        session = session_result["session"]
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -286,7 +294,11 @@ async def validateCancel(file: UploadFile = File(...)):
         date_identifier = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_filename = f"VALIDATEDCANCEL_{date_identifier}{file_extension}"
         file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-        session = getSession()["session"]
+        session_result = getSession()
+        if session_result["error"]:
+            return {"error": True, "message": session_result.get("message", "Could not establish SAP session.")}
+        
+        session = session_result["session"]
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
