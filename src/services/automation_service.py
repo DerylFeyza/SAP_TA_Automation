@@ -120,7 +120,15 @@ def get_pid_sap(session, cleaned_df: pd.DataFrame, date_identifier, status_dfs: 
             df.columns = df.columns.str.strip()
             df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
             df = df[~df["Title"].isin(["", None])]
-            df["Level"] = df["Level"].astype(int)
+            
+            def safe_convert_level(val):
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return None
+
+            df["Level"] = df["Level"].apply(safe_convert_level)
+            df = df[df["Level"].notna()]
             df = df[~df["Level"].isin([0, 1])]
             df["Level1"] = df["Title"].str[:10]
             df["Level2"] = df["Title"].str[:15]
