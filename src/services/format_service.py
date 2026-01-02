@@ -6,8 +6,13 @@ from fastapi import HTTPException
 def clusterize_dfs(dfs: dict):
     try:
         clustered_dfs = {}
+        print("clustering dfs", dfs.keys())
         for status, df in dfs.items():
             df = df.copy()
+
+            if status.upper() == "CANCEL":
+                dfs[status] = df
+                continue
 
             if status.upper() == "CLOSE":
                 df_included = df[df["CurrentStatus"] != "CLNV"].copy()

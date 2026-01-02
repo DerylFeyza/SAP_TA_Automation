@@ -220,14 +220,15 @@ async def clusterize(file: UploadFile = File(...)):
         rollback_df = validate_rollback_result["rollback"]
 
         status_dfs = {}
-        print("is there error here")
         status_dfs = get_pid_sap(session, cleaned_df, date_identifier, status_dfs)
-        print("initetetes", status_dfs)
+        
+        if status_dfs is None:
+            return {"error": True, "message": "Failed to retrieve SAP data. Please check the SAP connection and try again."}
         
         validated_cancel_res = None
         if (
-            status_dfs["CANCEL"] is not None
-            and not status_dfs["CANCEL"].dropna(how="all").empty
+            status_dfs.get("CANCEL") is not None
+            and not status_dfs.get("CANCEL").dropna(how="all").empty
         ):
             validated_cancel_res = validate_cancel(session, status_dfs, date_identifier)
             status_dfs = validated_cancel_res["status"]
@@ -255,19 +256,31 @@ async def clusterize(file: UploadFile = File(...)):
                 )
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                 
-            if not validated_cancel_res["reservation"].dropna(how="all").empty:
+            if (
+                validated_cancel_res is not None
+                and not validated_cancel_res["reservation"].dropna(how="all").empty
+            ):
                 validated_cancel_res["reservation"].to_excel(
                     writer, sheet_name="CANCEL-RESERVATION", index=False
                 )
-            if not validated_cancel_res["budgeting"].dropna(how="all").empty:
+            if (
+                validated_cancel_res is not None
+                and not validated_cancel_res["budgeting"].dropna(how="all").empty
+            ):
                 validated_cancel_res["budgeting"].to_excel(
                     writer, sheet_name="CANCEL-BUDGETING", index=False
                 )
-            if not validated_cancel_res["excluded"].dropna(how="all").empty:
+            if (
+                validated_cancel_res is not None
+                and not validated_cancel_res["excluded"].dropna(how="all").empty
+            ):
                 validated_cancel_res["excluded"].to_excel(
                     writer, sheet_name="CANCEL-EXCLUDED", index=False
                 )
-            if not validated_cancel_res["accost"].dropna(how="all").empty:
+            if (
+                validated_cancel_res is not None
+                and not validated_cancel_res["accost"].dropna(how="all").empty
+            ):
                 validated_cancel_res["accost"].to_excel(
                     writer, sheet_name="CANCEL-ACTUALCOST", index=False
                 )
